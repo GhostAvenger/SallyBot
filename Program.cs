@@ -35,7 +35,7 @@ namespace SallyBot
         static internal int typingTicks = 0;
         static internal int oobaboogaErrorCount = 0;
         static internal int loopCounts = 0;
-        static internal int maxChatHistoryStrLength = 500; // max chat history length (you can go to like 4800 before errors with oobabooga)(subtract character prompt length if you are using one)
+        static internal int maxChatHistoryStrLength = 4000; // max chat history length (you can go to like 4800 before errors with oobabooga)(subtract character prompt length if you are using one)
 
         static internal string oobServer = "127.0.0.1";
         static internal int oobServerPort = 5000;
@@ -47,7 +47,10 @@ namespace SallyBot
 
         static internal ulong botUserId = 0; // <-- this is your bot's client ID number inside discord (not the token) and gets set in MainLoop after initialisation
 
-        static internal string botName = "SallyBot";
+        static internal string botName = "Lucina"; // Name of the bot
+        static internal string bypassKeyword = "Bypass"; // Keyword used to bypass LLM directly to Stable Diffusion
+        static internal bool bypass = false;
+        static internal bool filterStatus = false; // Enable/Disable the SFW filter in the bot
 
         static internal string oobaboogaChatHistory = string.Empty; // <-- chat history saves to this string over time
                                                                     //static internal bool chatHistoryDownloaded = false; // Records if you have downloaded chat history before so it only downloads message history once.
@@ -111,7 +114,7 @@ namespace SallyBot
             //{
             //    Console.WriteLine(eventArgs.Exception.ToString());
             //};
-
+            
             try
             {
                 Client = new DiscordSocketClient(new DiscordSocketConfig
@@ -358,23 +361,25 @@ namespace SallyBot
                     //        oobaboogaChatHistory = Regex.Replace(oobaboogaChatHistory, linkDetectionRegexStr, "<url>");
                     //    }
                     //}
-
-                    string oobaBoogaChatHistoryDetectedWords = Functions.IsSimilarToBannedWords(oobaboogaChatHistory, bannedWords);
                     string removedWords = string.Empty; // used if words are removed
-                    if (oobaBoogaChatHistoryDetectedWords.Length > 2) // Threshold set to 2
+                    if (filterStatus)
                     {
-                        foreach (string word in oobaBoogaChatHistoryDetectedWords.Split(' '))
+                        string oobaBoogaChatHistoryDetectedWords = Functions.IsSimilarToBannedWords(oobaboogaChatHistory, bannedWords);
+                        if (oobaBoogaChatHistoryDetectedWords.Length > 2) // Threshold set to 2
                         {
-                            string wordTrimmed = word.Trim();
-                            if (wordTrimmed.Length > 2)
+                            foreach (string word in oobaBoogaChatHistoryDetectedWords.Split(' '))
                             {
-                                oobaboogaChatHistory = oobaboogaChatHistory.Replace(wordTrimmed, "****");
+                                string wordTrimmed = word.Trim();
+                                if (wordTrimmed.Length > 2)
+                                {
+                                    oobaboogaChatHistory = oobaboogaChatHistory.Replace(wordTrimmed, "****");
 
-                                if (oobaboogaChatHistory.Contains("  "))
-                                    oobaboogaChatHistory = oobaboogaChatHistory.Replace("  ", " ");
+                                    if (oobaboogaChatHistory.Contains("  "))
+                                        oobaboogaChatHistory = oobaboogaChatHistory.Replace("  ", " ");
+                                }
                             }
+                            removedWords = " Removed all banned or similar words.";
                         }
-                        removedWords = " Removed all banned or similar words.";
                     }
                     // show the full downloaded chat message history in the console
                     Console.WriteLine(oobaboogaChatHistory.Trim());
@@ -415,22 +420,25 @@ namespace SallyBot
 
                 // formats the message in chat format
                 string inputMsgFiltered = $"[{msgUsernameClean}]: {inputMsg}";
-
-                string msgDetectedWords = Functions.IsSimilarToBannedWords(inputMsgFiltered, bannedWords);
-                if (msgDetectedWords.Length > 2) // Threshold set to only check messages greater than 2 characters
+                
+                if (filterStatus)
                 {
-                    foreach (string word in msgDetectedWords.Split(' '))
+                    string msgDetectedWords = Functions.IsSimilarToBannedWords(inputMsgFiltered, bannedWords);
+                    if (msgDetectedWords.Length > 2) // Threshold set to only check messages greater than 2 characters
                     {
-                        string wordTrimmed = word.Trim();
-                        if (wordTrimmed.Length > 2)
+                        foreach (string word in msgDetectedWords.Split(' '))
                         {
-                            inputMsgFiltered = inputMsgFiltered.Replace(wordTrimmed, "****");
+                            string wordTrimmed = word.Trim();
+                            if (wordTrimmed.Length > 2)
+                            {
+                                inputMsgFiltered = inputMsgFiltered.Replace(wordTrimmed, "****");
 
-                            if (inputMsgFiltered.Contains("  "))
-                                inputMsgFiltered = inputMsgFiltered.Replace("  ", " ");
+                                if (inputMsgFiltered.Contains("  "))
+                                    inputMsgFiltered = inputMsgFiltered.Replace("  ", " ");
+                            }
                         }
+                        Console.WriteLine($"{inputMsgFiltered} <Banned or similar words removed.>{imagePresent}");
                     }
-                    Console.WriteLine($"{inputMsgFiltered} <Banned or similar words removed.>{imagePresent}");
                 }
                 else if (dalaiConnected == false)
                 { // don't log in console if using dalai
@@ -523,7 +531,28 @@ namespace SallyBot
                 .Replace("\\n", ""); // this makes all the prompting detection regex work, but if you know what you're doing you can change these
 
             // check if the user is requesting a picture or not
-            bool takeAPicMatch = takeAPicRegex.IsMatch(inputMsgFiltered);
+            bool takeAPicMatch = takeAPicRegex.IsMatch(inputMsgFiltered) || 
+                Regex.IsMatch(inputMsgFiltered, @$"\b{bypassKeyword}\b", RegexOptions.IgnoreCase);
+            var Context = new SocketCommandContext(Client, Msg);
+            var user = Context.User as SocketGuildUser;
+            if (takeAPicMatch && Regex.IsMatch(inputMsgFiltered, @$"\b{bypassKeyword}\b", RegexOptions.IgnoreCase))
+            {
+                if (user.Roles.Contains((user as IGuildUser).Guild.Roles.FirstOrDefault(x => x.Id == 1100600361598865549)))
+                {
+                    // send snipped and regexed image prompt string off to stable diffusion
+                    Functions.TakeAPic(Msg, "", inputMsgFiltered, true);
+
+                    // write the bot's chat line with a description of its image the text generator can read
+                    var ChatChatLineFormatted = $"[{botName}]: pic.png\nImage description: {inputMsgFiltered}";
+                    Console.WriteLine(ChatChatLineFormatted.Trim()); // write in console so we can see it too
+                    return;
+                }
+                else
+                {
+                    await Msg.ReplyAsync("You don't have bypass permission silly!");
+                    return;
+                }
+            }
 
             //// you can use this if you want to trim the messages to below 500 characters each
             //// (prevents hacking the bot memory a little bit)
@@ -540,23 +569,23 @@ namespace SallyBot
 
             if (referencedMsg != null)
             {
-                truncatedReply = referencedMsg.Content;
-                string replyUsernameClean = string.Empty;
-                if (referencedMsg.Author.Id == botUserId)
-                {
-                    replyUsernameClean = botName;
-                }
-                else
-                {
-                    replyUsernameClean = Regex.Replace(referencedMsg.Author.Username, "[^a-zA-Z0-9]+", "");
-                }
+               truncatedReply = referencedMsg.Content;
+               string replyUsernameClean = string.Empty;
+               if (referencedMsg.Author.Id == botUserId)
+               {
+                   replyUsernameClean = botName;
+               }
+               else
+               {
+                   replyUsernameClean = Regex.Replace(referencedMsg.Author.Username, "[^a-zA-Z0-9]+", "");
+               }
 
-                var lines = oobaboogaChatHistory.Trim().Split('\n');
-                oobaboogaChatHistory = string.Join("\n", lines.Reverse().Skip(1).Reverse());
+               var lines = oobaboogaChatHistory.Trim().Split('\n');
+               oobaboogaChatHistory = string.Join("\n", lines.Reverse().Skip(1).Reverse());
 
-                // add back on the last message but with the reply content above it
-                oobaboogaChatHistory += $"\n[{replyUsernameClean}]: {truncatedReply}" +
-                    $"\n{inputMsgFiltered}\n";
+               // add back on the last message but with the reply content above it
+               oobaboogaChatHistory += $"\n[{replyUsernameClean}]: {truncatedReply}" +
+                   $"\n{inputMsgFiltered}";
             }
 
             inputMsgFiltered = Regex.Unescape(inputMsgFiltered) // try unescape to allow for emojis? Isn't working because of Dalai code. I can't figure out how to fix. Emojis are seen by dalai as ??.
@@ -611,19 +640,22 @@ namespace SallyBot
                                         Regex.Replace(($"### User request: {inputMsg}" + "\n" +
                                         inputPromptEndingPic).Trim(),
                                         pingAndChannelTagDetectFilterRegexStr, ""); // <--- filters pings and channel tags out of image prompt
-
-                string msgDetectedWords = Functions.IsSimilarToBannedWords(oobaboogaInputPrompt, bannedWords);
-                if (msgDetectedWords.Length > 2) // Threshold set to 2
+    
+                if (filterStatus)
                 {
-                    foreach (string word in msgDetectedWords.Split(' '))
+                    string msgDetectedWords = Functions.IsSimilarToBannedWords(oobaboogaInputPrompt, bannedWords);
+                    if (msgDetectedWords.Length > 2) // Threshold set to 2
                     {
-                        string wordTrimmed = word.Trim();
-                        if (wordTrimmed.Length > 2)
+                        foreach (string word in msgDetectedWords.Split(' '))
                         {
-                            oobaboogaInputPrompt = oobaboogaInputPrompt.Replace(wordTrimmed, "");
+                            string wordTrimmed = word.Trim();
+                            if (wordTrimmed.Length > 2)
+                            {
+                                oobaboogaInputPrompt = oobaboogaInputPrompt.Replace(wordTrimmed, "");
 
-                            if (oobaboogaInputPrompt.Contains("  "))
-                                oobaboogaInputPrompt = oobaboogaInputPrompt.Replace("  ", " ");
+                                if (oobaboogaInputPrompt.Contains("  "))
+                                    oobaboogaInputPrompt = oobaboogaInputPrompt.Replace("  ", " ");
+                            }
                         }
                     }
                 }
@@ -739,23 +771,25 @@ namespace SallyBot
                 oobaboogaThinking = 0; // reset thinking flag after error
                 return;
             }
-
-            string oobaBoogaImgPromptDetectedWords = Functions.IsSimilarToBannedWords(botReply, bannedWords);
-
-            if (oobaBoogaImgPromptDetectedWords.Length > 2) // Threshold set to 2
+            if (filterStatus)
             {
-                foreach (string word in oobaBoogaImgPromptDetectedWords.Split(' '))
-                {
-                    string wordTrimmed = word.Trim();
-                    if (wordTrimmed.Length > 2)
-                    {
-                        botReply = botReply.Replace(wordTrimmed, "");
+                string oobaBoogaImgPromptDetectedWords = Functions.IsSimilarToBannedWords(botReply, bannedWords);
 
-                        if (botReply.Contains("  "))
-                            botReply = botReply.Replace("  ", " ");
+                if (oobaBoogaImgPromptDetectedWords.Length > 2) // Threshold set to 2
+                {
+                    foreach (string word in oobaBoogaImgPromptDetectedWords.Split(' '))
+                    {
+                        string wordTrimmed = word.Trim();
+                        if (wordTrimmed.Length > 2)
+                        {
+                            botReply = botReply.Replace(wordTrimmed, "");
+
+                            if (botReply.Contains("  "))
+                                botReply = botReply.Replace("  ", " ");
+                        }
                     }
+                    Console.WriteLine("Removed banned or similar words from Oobabooga generated reply.");
                 }
-                Console.WriteLine("Removed banned or similar words from Oobabooga generated reply.");
             }
             string botChatLineFormatted = string.Empty;
             // trim off the input prompt AND any immediate newlines from the final message
@@ -797,7 +831,7 @@ namespace SallyBot
                 string llmPromptPicRegexed = Regex.Replace(llmPromptPic, "[^a-zA-Z0-9,\\s]+", "");
 
                 // send snipped and regexed image prompt string off to stable diffusion
-                Functions.TakeAPic(Msg, llmPromptPicRegexed, inputMsgFiltered);
+                Functions.TakeAPic(Msg, llmPromptPicRegexed, inputMsgFiltered, false);
 
                 // write the bot's chat line with a description of its image the text generator can read
                 botChatLineFormatted = $"[{botName}]: pic.png\nImage description: {Functions.imgFormatString}{llmPromptPicRegexed.Replace("\n", ", ")}\n";
@@ -961,6 +995,7 @@ namespace SallyBot
                     }
                 }
 
+                llmMsgFiltered = llmMsgFiltered.Replace("</s>", "");
                 botLastReply = llmMsgFiltered;
 
                 await Msg.ReplyAsync(llmMsgFiltered); // send bot msg as a reply to the user's message
@@ -1270,7 +1305,7 @@ namespace SallyBot
                             typing = 0;
                             dalaiThinking = 0;
                         }
-                        Functions.TakeAPic(Msg, llmPrompt, inputMsg);
+                        Functions.TakeAPic(Msg, llmPrompt, inputMsg, false);
                     }
                 }
                 else

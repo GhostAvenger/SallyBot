@@ -161,7 +161,7 @@ namespace SallyBot.Extras
         //    }
         //    return response;
         //}
-        public static async Task TakeAPic(SocketUserMessage Msg, string llmPrompt, string userPrompt)
+        public static async Task TakeAPic(SocketUserMessage Msg, string llmPrompt, string userPrompt, bool bypassCheck)
         {
             var Context = new SocketCommandContext(MainGlobal.Client, Msg);
             var user = Context.User as SocketGuildUser;
@@ -181,11 +181,14 @@ namespace SallyBot.Extras
             string imgPrompt = string.Empty; 
             
             // NEGATIVE prompt - write what you DON'T want to see in the image here
-            string imgNegPrompt = $"negative_hand-neg:1, (nsfw, naked, nude:1.6), (easynegative:1.0), (negative_hand-neg:0.9), (worst quality, low quality:1.4), 3 arms, extra arms, extra limbs";
+            string imgNegPrompt = $"canvas frame, cartoon, 3d, ((disfigured)), ((bad art)), ((deformed)),((extra limbs)),((close up)),((b&w)), weird colors, blurry, (((duplicate))), ((morbid)), ((mutilated)), [out of frame], extra fingers, mutated hands, ((poorly drawn hands)), ((poorly drawn face)), (((mutation))), (((deformed))), ((ugly)), blurry, ((bad anatomy)), (((bad proportions))), ((extra limbs)), cloned face, (((disfigured))), out of frame, ugly, extra limbs, (bad anatomy), gross proportions, (malformed limbs), ((missing arms)), ((missing legs)), (((extra arms))), (((extra legs))), mutated hands, (fused fingers), (too many fingers), (((long neck))), signature, video game, ugly, tiling, poorly drawn hands, poorly drawn feet, poorly drawn face, out of frame, mutation, mutated, extra limbs, extra legs, extra arms, disfigured, deformed, cross-eye, body out of frame, blurry, bad art, bad anatomy, 3d render, (EasyNegative:1.2), (monochrome:1.1), (greyscale), wings, boobs, canvas frame, cartoon, 3d, ((disfigured)), ((bad art)), ((deformed)),((extra limbs)),((close up)),((b&w)), weird colors, blurry, (((duplicate))), ((morbid)), ((mutilated)), [out of frame], extra fingers, mutated hands, ((poorly drawn hands)), ((poorly drawn face)), (((mutation))), (((deformed))), ((ugly)), blurry, ((bad anatomy)), (((bad proportions))), ((extra limbs)), cloned face, (((disfigured))), out of frame, ugly, extra limbs, (bad anatomy), gross proportions, (malformed limbs), ((missing arms)), ((missing legs)), (((extra arms))), (((extra legs))), mutated hands, (fused fingers), (too many fingers), (((long neck))), signature, video game, ugly, tiling, poorly drawn hands, poorly drawn feet, poorly drawn face, out of frame, mutation, mutated, extra limbs, extra legs, extra arms, disfigured, deformed, cross-eye, body out of frame, blurry, bad art, bad anatomy, 3d render, (EasyNegative:1.2), (monochrome:1.1), (greyscale),";
 
-            int width = 688;
-            int height = 488;
+            // Image Generation Settings
+            int width = 500;
+            int height = 650;
+            int batch_size = 1;
             bool selfie = false;
+            string sampler = "DPM++ SDE Karras";
             //customdscode
 
             if (userPrompt.Length > 4
@@ -258,11 +261,20 @@ namespace SallyBot.Extras
             }
 
             //if (Msg.Author == MainGlobal.Server.Owner) // only owner
-            imgPrompt = $"{imgPrompt} {llmPrompt}";
+
+            if (bypassCheck) 
+            {   
+                Console.WriteLine("Bypass Granted");
+                imgPrompt = Regex.Replace(userPrompt, ".*?\\bBypass\\s", "");
+            }
+            else
+            {
+                imgPrompt = $"{imgPrompt} {llmPrompt}";
+            }
 
             var overrideSettings = new JObject
             {// uncomment this line to specify a particular image model you want to use
-                //{ "sd_model_checkpoint", "AnythingV5_v5PrtRE.safetensors" }
+                //{ "sd_model_che0ifffffffckpoint", "AnythingV5_v5PrtRE.safetensors" }
             };
 
             var payload = new JObject
@@ -272,10 +284,21 @@ namespace SallyBot.Extras
                 { "steps", 20 },
                 { "width", width },
                 { "height", height },
+                { "batch_size", batch_size },
                 { "send_images", true },
-                { "sampler_name", "DDIM" }, // set this to "DPM++ SDE Karras" if you want slightly higher quality images, but slower image generation
+                { "sampler_name", sampler },
+                { "enable_hr", true },
+                { "denoising_strength", 0.3 },
+                //{ "firstphase_width", width },
+                //{ "firstphase_height", height },
+                { "hr_scale", 1.5 },
+                { "hr_resize_x", width*1.5 },
+                { "hr_resize_y", height*1.5 },
+                { "hr_upscaler", "R-ESRGAN 4x+ Anime6B" },
+                { "hr_second_pass_steps", 5 },
                 { "override_settings", overrideSettings }
             };
+            
 
             // Below are all the potential json tags you can send to the stable diffusion image generator.
             // Just add any of these you want to the payload section above.
